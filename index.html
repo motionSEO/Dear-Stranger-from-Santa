@@ -34,6 +34,9 @@
   #err { position:fixed; inset:auto 16px 16px; z-index:30; display:none; padding:12px 14px;
     background:#3a1515; border:1px solid #7a3030; border-radius:10px; white-space:pre-wrap; font-size:12px; }
 
+  #toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%); z-index:14; padding:7px 14px; border-radius:20px;
+    background:rgba(16,14,12,.75); color:#ffd9a8; font-size:13px; opacity:0; transition:opacity .3s; pointer-events:none; }
+  #toast.on { opacity:1; }
   #cross { position:fixed; left:50%; top:50%; width:6px; height:6px; margin:-3px 0 0 -3px; z-index:9;
     border-radius:50%; background:rgba(255,230,200,.85); box-shadow:0 0 0 1.5px rgba(0,0,0,.45); display:none; pointer-events:none; }
   body.locked #cross { display:block; }
@@ -67,11 +70,14 @@
       <button id="mode" aria-pressed="true">1인칭 걷기</button>
       <button id="shadows" aria-pressed="true">그림자</button>
     </div>
-    <div style="margin-top:7px;font-size:11px;color:#9c9387">클릭 = 시점 잠금 · 마우스 = 둘러보기 · WASD = 걷기 · Shift = 빠르게 · C = 웅크리기 · Esc = 해제<br>VR: 왼쪽 스틱 = 걷기 · 오른쪽 스틱 = 회전</div>
+    <div style="margin-top:7px;font-size:11px;color:#9c9387">클릭 = 시점 잠금 · 마우스 = 둘러보기 · WASD = 걷기 · Shift = 빠르게 · C = 웅크리기 · Esc = 해제<br>허브: 조준점을 화분에 두고 왼쪽 클릭 누른 채 = 잎 따기, 떼면 떨어짐 (휠 = 거리) · 머그: 누르고 있으면 마시기
+      <br>퀘스트3 손: 엄지+검지 집기 = 허브 따기 · 주먹 = 머그 잡기 · 빈 곳에 집기 → 가리킨 바닥으로 이동
+      <br>퀘스트3 컨트롤러: 왼쪽 스틱 = 걷기 · 오른쪽 스틱 = 회전 · 트리거 = 집기/이동 · 그립 = 머그</div>
   </div>
 </div>
 <div id="start"><b>클릭해서 다락방 들어가기</b><span>마우스로 둘러보고 WASD로 걸어요 · Esc로 빠져나오기</span></div>
 <div id="cross"></div>
+<div id="toast"></div>
 <div id="pad"><i></i></div>
 <pre id="err"></pre>
 
@@ -85,7 +91,8 @@
 
 <script src="modules/herbs.js"></script>
 <script src="modules/mug.js"></script>
-<script src="room.glb.js"></script>
+<!-- room: room.glb is loaded directly (room.glb.js also works if present) -->
+<script src="room.glb.js" onerror="this.remove()"></script>
 <script type="module">
 import * as THREE from 'three';
 await window.herbsReady; await window.mugReady; const { HerbGarden, MugModule } = window;
@@ -102,6 +109,8 @@ import { VRButton } from 'three/addons/webxr/VRButton.js';
 
 const showErr = (m) => { const e = document.getElementById('err'); e.style.display='block'; e.textContent += m + '\n'; };
 window.addEventListener('error', e => showErr('⚠ ' + e.message));
+let toastT = 0;
+const toast = (m) => { const t = document.getElementById('toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 1600); };
 
 // ---------------------------------------------------------------- renderer
 const app = document.getElementById('app');
@@ -115,7 +124,9 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.xr.enabled = true;
 app.appendChild(renderer.domElement);
-document.body.appendChild(VRButton.createButton(renderer));
+// Quest 3: ask for hand tracking (controllers keep working too)
+document.body.appendChild(VRButton.createButton(renderer, { optionalFeatures: ['hand-tracking'] }));
+renderer.xr.setFoveation?.(1);
 RectAreaLightUniformsLib.init();
 
 const scene = new THREE.Scene();
@@ -154,7 +165,7 @@ const P = {
   feet: new THREE.Vector3(),       // where the player stands (desktop and VR)
   vy: 0,                           // vertical speed (falling)
   eye: 1.55, eyeStand: 1.55, eyeCrouch: 0.95,
-  radius: 0.2, step: 0.32, walk: 1.25, run: 2.6, gravity: 9.8
+  radius: 0.2, step: 0.32, minHead: 1.05, ceil: 9, walk: 1.25, run: 2.6, gravity: 9.8
 };
 let walkMode = true;               // false = free-fly (no collision), for inspecting the scene
 let yaw = 0, pitch = 0;
@@ -214,7 +225,7 @@ const _m = new THREE.Vector3(), _best = new THREE.Vector3();
 function walkMove(feet, move, dt) {
   const start = feet.clone();
   _m.copy(move); _m.y = 0;
-  const heights = [0.18 + P.step, 0.6, 0.95, P.eye - 0.08].filter(h => h <= P.eye);
+  const heights = [0.18 + P.step, 0.62, 0.95];          // walls/furniture; the sloped roof is handled by head room below
   for (let it = 0; it < 3; it++) {
     const len = _m.length(); if (len < 1e-6) break;
     _d.copy(_m).divideScalar(len);
@@ -247,8 +258,10 @@ function walkMove(feet, move, dt) {
   else { P.vy -= P.gravity * dt; feet.y = Math.max(fy, feet.y + P.vy * dt); if (feet.y === fy) P.vy = 0; }
   // head room: the attic roof slopes down to the floor; don't walk under it
   _o.set(feet.x, feet.y + 0.3, feet.z);
-  const up = cast(_o, UP, P.eye);
-  if (up && up.distance < P.eye - 0.18) { feet.copy(start); }
+  const up = cast(_o, UP, 2.5);
+  const clear = up ? up.distance + 0.3 : 9;
+  if (clear < P.minHead) { feet.copy(start); }         // too low even ducking: the eaves stop you
+  else P.ceil = clear;                                  // otherwise the eye ducks under it (moveStep)
   return feet;
 }
 
@@ -329,12 +342,9 @@ function inputVector() {             // x = strafe, y = forward, from keys or th
 function moveStep(dt) {
   if (renderer.xr.isPresenting) return;
   const crouch = keys.has('KeyC') || keys.has('ControlLeft');
-  const target = crouch ? P.eyeCrouch : P.eyeStand;
-  if (target > P.eye) {                                 // only stand up if there is room above
-    _o.set(P.feet.x, P.feet.y + 0.3, P.feet.z);
-    const up = colliders.length ? cast(_o, UP, target) : null;
-    if (!up || up.distance > target - 0.12) P.eye = Math.min(target, P.eye + dt * 2.5);
-  } else P.eye = Math.max(target, P.eye - dt * 3);
+  // duck automatically under rafters and the sloping roof (attic!), C = crouch on purpose
+  const target = Math.min(crouch ? P.eyeCrouch : P.eyeStand, P.ceil - 0.14);
+  P.eye = target > P.eye ? Math.min(target, P.eye + dt * 2.0) : Math.max(target, P.eye - dt * 4.0);
   const run = keys.has('ShiftLeft') || keys.has('ShiftRight');
   const speed = (crouch ? 0.6 : run ? P.run : P.walk) * dt;
   const { x, y } = inputVector();
@@ -382,6 +392,7 @@ function vrStep(dt) {
   if (colliders.length) { P.eye = P.eyeStand; walkMove(_body, _mv, dt); } else _body.add(_mv);
   rig.position.x += _body.x - before.x; rig.position.z += _body.z - before.z; rig.position.y = _body.y;
   P.feet.copy(_body);
+  teleportStep();
 }
 
 function applyView(v) {
@@ -398,8 +409,76 @@ function applyView(v) {
   placeCamera();
 }
 
+// ---- hands (and triggers): pinch at nothing = aim at the floor, let go = go there
+const tpLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]),
+  new THREE.LineBasicMaterial({ color: 0xffd9a8, transparent: true, opacity: 0.8 }));
+const tpRing = new THREE.Mesh(new THREE.RingGeometry(0.13, 0.17, 32).rotateX(-Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0xffd9a8, transparent: true, opacity: 0.85, depthWrite: false }));
+tpLine.visible = tpRing.visible = false; tpLine.frustumCulled = false; scene.add(tpLine, tpRing);
+let tpSlot = null, tpTarget = null;
+const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _dir = new THREE.Vector3();
+function aimRay(slot, origin, dir) {
+  const J = slot.hand.joints;
+  if (slot.isHand && J && J['wrist'] && J['index-finger-phalanx-proximal']) {
+    J['wrist'].getWorldPosition(_a); J['index-finger-phalanx-proximal'].getWorldPosition(origin);
+    dir.subVectors(origin, _a).normalize();
+    dir.y -= 0.35; dir.normalize();                         // a relaxed hand points a bit high: aim lower
+  } else {
+    slot.ctrl.getWorldPosition(origin);
+    dir.set(0, 0, -1).applyQuaternion(slot.ctrl.getWorldQuaternion(new THREE.Quaternion()));
+  }
+}
+function validFloor(p) {
+  const fy = floorAt(p.x, p.y + 0.05, p.z); if (fy === null || Math.abs(fy - p.y) > 0.06) return false;
+  if (Math.abs(fy - P.feet.y) > 0.4) return false;
+  _o.set(p.x, fy + 0.3, p.z); const up = cast(_o, UP, 2.5); if (up && up.distance + 0.3 < P.minHead) return false;
+  for (let k = 0; k < 8; k++) {                            // not inside furniture
+    const a = k / 8 * Math.PI * 2; _d.set(Math.cos(a), 0, Math.sin(a)); _o.set(p.x, fy + 0.62, p.z);
+    const h = cast(_o, _d, P.radius * 0.9); if (h) return false;
+  }
+  return true;
+}
+function teleportStep() {
+  const aims = garden ? garden.aimingHands() : [];
+  if (tpSlot && !aims.includes(tpSlot)) {                 // released: jump
+    if (tpTarget) {
+      renderer.xr.getCamera().getWorldPosition(_head);
+      rig.position.x += tpTarget.x - _head.x; rig.position.z += tpTarget.z - _head.z; rig.position.y = tpTarget.y;
+      P.feet.set(tpTarget.x, tpTarget.y, tpTarget.z);
+    }
+    tpSlot = null; tpTarget = null;
+  }
+  if (!tpSlot && aims.length) tpSlot = aims[0];
+  tpLine.visible = tpRing.visible = !!tpSlot;
+  if (!tpSlot) return;
+  aimRay(tpSlot, _b, _dir);
+  const h = cast(_b, _dir, 6);
+  tpTarget = null;
+  let end = _b.clone().addScaledVector(_dir, h ? h.distance : 3);
+  if (h && hitNormal(h).y > 0.7 && validFloor(h.point)) tpTarget = h.point.clone();
+  tpLine.geometry.setFromPoints([_b.clone(), end]);
+  tpRing.position.copy(end).y += 0.01;
+  tpRing.material.color.set(tpTarget ? 0xffd9a8 : 0xd05a4a);
+  tpLine.material.color.set(tpTarget ? 0xffd9a8 : 0xd05a4a);
+}
+
+// ---- VR is a phone-class GPU: fewer lights and no shadows while in the headset
+let xrSaved = null;
+function xrQuality(on) {
+  if (on) {
+    xrSaved = { shadows: renderer.shadowMap.enabled, lights: [] };
+    renderer.shadowMap.enabled = false;
+    keptLights.forEach((l, i) => { if (i >= 8 && l.visible) { l.visible = false; xrSaved.lights.push(l); } });
+    bloom.enabled = false;
+  } else if (xrSaved) {
+    renderer.shadowMap.enabled = xrSaved.shadows; xrSaved.lights.forEach(l => l.visible = true); bloom.enabled = true; xrSaved = null;
+  }
+  scene.traverse(o => { if (o.isMesh) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m && (m.needsUpdate = true)); });
+}
+
 // hand the camera over to the rig for VR, and take it back afterwards
 renderer.xr.addEventListener('sessionstart', () => {
+  xrQuality(true);
   document.body.classList.add('xr');
   if (document.pointerLockElement) document.exitPointerLock();
   rig.position.copy(P.feet); rig.rotation.set(0, yaw, 0);
@@ -408,6 +487,7 @@ renderer.xr.addEventListener('sessionstart', () => {
   camera.rotation.set(0, 0, 0);
 });
 renderer.xr.addEventListener('sessionend', () => {
+  xrQuality(false); tpSlot = null; tpLine.visible = tpRing.visible = false;
   document.body.classList.remove('xr');
   scene.add(camera);
   yaw = rig.rotation.y; pitch = 0;
@@ -706,14 +786,17 @@ function onRoom(gltf) {
   }
 
   if (HerbGarden) try {   // herbs.js: edit there, both pages follow
-    garden = new HerbGarden(root, scene, { colliders: [root] });
+    let picked = 0;
+    garden = new HerbGarden(root, scene, { colliders: [root], onHarvest: (label) => toast(`${label} 채취 · ${++picked}개`) });
     garden.attachHands(renderer, rig);
     garden.enableMouse(renderer.domElement, camera, 0);   // desktop: left button (crosshair while locked) on a plant/mug
-    if (MugModule) new MugModule(root, scene, garden, camera);   // mug.js: cocoa, steam, drink at the mouth
+    if (MugModule) window.__mug = new MugModule(root, scene, garden, camera);
+    window.__garden = garden;   // mug.js: cocoa, steam, drink at the mouth
   } catch (e) { garden = null; console.error(e); showErr('herbs: ' + e.message); }
 
   const box = new THREE.Box3().setFromObject(root);
-  window.__dbg = { THREE, scene, root, camera, renderer, composer, box, lights, P, colliders, setLook: (y, p = 0) => { yaw = y; pitch = p; } };
+  window.__dbg = { THREE, scene, root, camera, renderer, composer, box, lights, P, colliders, setLook: (y, p = 0) => { yaw = y; pitch = p; },
+    sim: (y, sec, key = 'KeyW') => { yaw = y; keys.add(key); for (let i = 0; i < sec * 60; i++) moveStep(1 / 60); keys.delete(key); return [P.feet.x, P.feet.y, P.feet.z, P.eye].map(v => +v.toFixed(2)); } };
   buildColliders(root);
   if (currentView) applyView(currentView);    // drop onto the real floor now that it exists
   document.getElementById('loading').classList.add('done');
