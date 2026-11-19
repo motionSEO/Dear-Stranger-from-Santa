@@ -52,6 +52,7 @@
     background:rgba(255,215,170,.35); }
   @media (pointer:coarse) { #pad { display:block; } #start { display:none; } }
   @media (max-width: 640px) { #hud { left:10px; top:10px; } .panel { padding:8px 10px; } }
+#hint{position:fixed;top:14px;left:50%;transform:translateX(-50%);max-width:min(560px,90vw);padding:10px 16px;border-radius:12px;background:rgba(20,14,10,.78);color:#f3e6d3;font-size:14px;line-height:1.5;text-align:center;pointer-events:none;display:none;z-index:20}
 </style>
 </head>
 <body>
@@ -70,7 +71,7 @@
       <button id="mode" aria-pressed="true">1인칭 걷기</button>
       <button id="shadows" aria-pressed="true">그림자</button>
     </div>
-    <div style="margin-top:7px;font-size:11px;color:#9c9387">클릭 = 시점 잠금 · 마우스 = 둘러보기 · WASD = 걷기 · Shift = 빠르게 · C = 웅크리기 · Esc = 해제<br>허브: 조준점을 화분에 두고 왼쪽 클릭 누른 채 = 잎 따기, 떼면 떨어짐 (휠 = 거리) · 머그: 누르고 있으면 마시기
+    <div style="margin-top:7px;font-size:11px;color:#9c9387"><b style="color:#ffd9a8">체험: 시작하면 벽난로에 불이 붙고 편지가 날아와요. 안내(화면 위)를 따라가요. Space = 행동 · R/오른쪽 클릭 = 기울이기</b><br>클릭 = 시점 잠금 · 마우스 = 둘러보기 · WASD = 걷기 · Shift = 빠르게 · C = 웅크리기 · Esc = 해제<br>허브: 조준점을 화분에 두고 왼쪽 클릭 누른 채 = 잎 따기, 떼면 떨어짐 (휠 = 거리) · 머그: 누르고 있으면 마시기
       <br>퀘스트3 손: 엄지+검지 집기 = 허브 따기 · 주먹 = 머그 잡기 · 빈 곳에 집기 → 가리킨 바닥으로 이동
       <br>퀘스트3 컨트롤러: 왼쪽 스틱 = 걷기 · 오른쪽 스틱 = 회전 · 트리거 = 집기/이동 · 그립 = 머그</div>
   </div>
@@ -78,6 +79,7 @@
 <div id="start"><b>클릭해서 다락방 들어가기</b><span>마우스로 둘러보고 WASD로 걸어요 · Esc로 빠져나오기</span></div>
 <div id="cross"></div>
 <div id="toast"></div>
+<div id="hint"></div>
 <div id="pad"><i></i></div>
 <pre id="err"></pre>
 
@@ -528,7 +530,8 @@ let shadowCasters = [], keptLights = [], rectLights = [];
 const fireFx = { light: null, tick: null, snow: null, halos: [] };
 const pineLights = [];
 const swayT = { value: 0 };
-let garden = null;
+let garden = null, flow = null;
+const fireLevel = { k: 1 };
 function onRoom(gltf) {
   const root = gltf.scene;
   scene.add(root);
@@ -624,6 +627,7 @@ function onRoom(gltf) {
     return { k, mat: new THREE.MeshBasicMaterial({ color: col, toneMapped: false }) };
   });
   const flame = new THREE.Group(); flame.position.copy(fp); flame.scale.setScalar(fireScale); scene.add(flame);
+  fireFx.setLevel = (k) => { fireLevel.k = k; flame.scale.setScalar(fireScale * Math.max(0.05, k)); flame.visible = k > 0.02; embers.visible = k > 0.3; };
   const tongues = [[0,0,.2,1],[.07,.03,.15,.8],[-.07,-.02,.16,.85],[.03,-.07,.12,.65],[-.04,.07,.13,.7]];
   for (const [x, z, w, h] of tongues) {
     const t = new THREE.Group(); t.position.set(x, 0, z); t.userData = { w, h, ph: Math.random() * 6.28 };
@@ -800,6 +804,12 @@ function onRoom(gltf) {
   buildColliders(root);
   if (currentView) applyView(currentView);    // drop onto the real floor now that it exists
   document.getElementById('loading').classList.add('done');
+  // the experience: letter at the fireplace -> recipe book -> make a bath bomb -> wrap -> letter -> send
+  import('./modules/flow.js').then(({ startFlow }) => {
+    flow = startFlow({ scene, root, camera, renderer, rig, garden, canvas: renderer.domElement, toast, P, cast,
+      hintEl: document.getElementById('hint'), fire: { setLevel: (k) => fireFx.setLevel?.(k) } });
+    window.__flow = flow;
+  }).catch(e => { console.error(e); showErr('flow: ' + e.message); });
 }
 const onRoomErr = (e) => { showErr('GLB 로드 실패: ' + (e?.message || e) + '\n→ room.glb.js (또는 room.glb) 파일이 index.html 옆에 있어야 해요.');
   document.getElementById('loading').classList.add('done'); };
@@ -849,9 +859,10 @@ renderer.setAnimationLoop(() => {
   const now = performance.now(), dt = Math.min((now - _last) / 1000, 0.1); _last = now;
   if (renderer.xr.isPresenting) vrStep(dt); else moveStep(dt);
   garden?.update(dt);
+  try { flow?.update(dt, now / 1000); } catch (e) { console.error(e); }
   if (fireFx.light) {
     const t = now / 1000;
-    fireFx.light.intensity = 1.6 + Math.sin(t*13)*.25 + Math.sin(t*31.7)*.2 + (Math.random()-.5)*.15;
+    fireFx.light.intensity = (1.6 + Math.sin(t*13)*.25 + Math.sin(t*31.7)*.2 + (Math.random()-.5)*.15) * fireLevel.k;
     fireFx.tick?.(t);
   }
   swayT.value = now / 1000; fireFx.snow?.(now / 1000, dt);

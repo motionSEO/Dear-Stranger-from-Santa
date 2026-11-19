@@ -17,10 +17,11 @@ window.herbsReady = Promise.all([
     mint:       { label: '민트',       kind: 'leaf',  color: 0x4f9a45 },
     lemongrass: { label: '레몬그라스', kind: 'blade', color: 0x8fb14a },
     rose:       { label: '장미',       kind: 'petal', color: 0xd8475f },
-    lavender:   { label: '라벤더',     kind: 'sprig', color: 0x8c74c8 }
+    lavender:   { label: '라벤더',     kind: 'sprig', color: 0x8c74c8 },
+    fir:        { label: '전나무 잎',  kind: 'blade', color: 0x2f6a3c }
   };
   const PLANT_OF = (name) => {
-    const m = /^Plant_(Mint|Lemongrass|Rose|Lavender)/.exec(name);
+    const m = /^Plant_(Mint|Lemongrass|Rose|Lavender|Fir)/.exec(name);
     return m ? m[1].toLowerCase() : null;
   };
 
@@ -59,9 +60,11 @@ window.herbsReady = Promise.all([
       this.root = root; this.scene = scene;
       this.colliders = opts.colliders || [root];
       this.onHarvest = opts.onHarvest || null;
+      this.onItemDrop = opts.onItemDrop || null;     // (item) => true if the page took it (e.g. into the mortar)
       this.items = [];            // harvested pieces lying around / held
       this.falling = [];
       this.grabbables = [];       // external (mug.js etc.)
+      this.blockers = [];         // UI panels etc.: a click that lands on one is not ours
       this.hands = [];            // XR input slots
       this.mouse = null;
       this.ray = new THREE.Raycaster();
@@ -81,6 +84,8 @@ window.herbsReady = Promise.all([
 
     // ------------------------------------------------------------- registry
     addGrabbable(g) { this.grabbables.push(g); return g; }
+    removeGrabbable(g) { this.grabbables = this.grabbables.filter(x => x !== g); }
+    addPlant(mesh, herb) { mesh.userData.herb = herb; const p = { mesh, herb, wiggle: 0, base: mesh.scale.clone() }; this.plants.push(p); return p; }
 
     plantDistance(p, point) {
       p.mesh.updateWorldMatrix(true, false);
@@ -94,7 +99,7 @@ window.herbsReady = Promise.all([
       if (mode === 'pinch' || mode === 'fist') {
         for (const it of this.items) if (!it.held) consider(it.mesh.getWorldPosition(_v).distanceTo(point), { type: 'item', it }, mode === 'fist' ? 0.07 : 0.045);
       }
-      for (const g of this.grabbables) if (g.modes.includes(mode) && !g.held) consider(g.distance(point), { type: 'ext', g }, g.reach ?? 0.08);
+      for (const g of this.grabbables) if (g.modes.includes(mode) && !g.held && g.enabled !== false && g.object.visible) consider(g.distance(point), { type: 'ext', g }, g.reach ?? 0.08);
       if (mode === 'pinch' && !best) for (const p of this.plants) consider(this.plantDistance(p, point), { type: 'plant', p }, 0.02);
       return best;
     }
@@ -118,6 +123,7 @@ window.herbsReady = Promise.all([
     // drop a piece: find what is under it, then let it flutter down there
     drop(it) {
       this.scene.attach(it.mesh); it.held = null;
+      if (this.onItemDrop?.(it)) return;
       const p = it.mesh.position;
       this.ray.set(_v.set(p.x, p.y + 0.01, p.z), DOWN); this.ray.far = 4;
       const hit = this.ray.intersectObjects(this.colliders, true).find(h => h.object !== it.mesh && !this.items.some(i => i.mesh === h.object) && h.object.visible);
@@ -222,9 +228,10 @@ window.herbsReady = Promise.all([
         if (e.button !== button || this.renderer?.xr.isPresenting) return;
         setNdc(e);
         this.ray.setFromCamera(m.ndc, camera); this.ray.far = 3.5;
-        const targets = [...this.plants.map(p => p.mesh), ...this.items.map(i => i.mesh), ...this.grabbables.flatMap(g => g.meshes ?? [g.object])];
+        const targets = [...this.plants.filter(p => p.mesh.visible).map(p => p.mesh), ...this.items.map(i => i.mesh), ...this.grabbables.filter(g => g.enabled !== false && g.object.visible).flatMap(g => g.meshes ?? [g.object]), ...this.blockers.filter(b => b.visible)];
         const hit = this.ray.intersectObjects(targets, true)[0]; if (!hit) return;
         let o = hit.object;
+        for (let q = o; q; q = q.parent) if (this.blockers.includes(q)) return;
         const it = this.items.find(i => i.mesh === o);
         const g = this.grabbables.find(g => { for (let q = o; q; q = q.parent) if (q === g.object) return true; return false; });
         const p = this.plants.find(p => p.mesh === o);
