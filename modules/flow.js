@@ -37,7 +37,7 @@ export const ING = {
   turmeric:   { name: '강황', location: 'shelf', action: 'pour', color: '#e9a21f' },
   coconutOil: { name: '코코넛 오일', location: 'shelf', action: 'pour', color: '#f6f1e4' }
 };
-const LOC = { basket: '과일 바구니', pot: '화분', drawer: '서랍', shelf: '선반의 병' };
+const LOC = { basket: '오른쪽 과일 바구니', pot: '오른쪽 화분', drawer: '왼쪽 책장 서랍', shelf: '오른쪽 병' };
 const ACT = { pour: '병을 기울여 쏟기', cutSqueeze: '칼로 자르고 즙 짜기', slice: '칼로 썰어 넣기', leaves: '꺾어서 잎 떼기',
   petals: '꺾어서 꽃잎 떼기', break: '양손으로 부러뜨리기', tear: '양손으로 찢기' };
 const BASE = ['fairySugar', 'starDust'];
@@ -65,20 +65,24 @@ const josa = (w, a, b) => { const c = w.charCodeAt(w.length - 1); return (c >= 0
 // shelf (bottles, basket, herb tray) on the right, the bookcase drawers on the left, the fireplace behind-right.
 const DESK_Y = 0.702;
 const L = {
-  stand:   new THREE.Vector3(1.05, 0, 0.0),
-  book:    new THREE.Vector3(0.62, DESK_Y, -0.58),
-  mortar:  new THREE.Vector3(0.45, DESK_Y, 0.0),
-  pestle:  new THREE.Vector3(0.64, DESK_Y + 0.012, 0.13),
-  board:   new THREE.Vector3(0.62, DESK_Y, -0.3),
-  knife:   new THREE.Vector3(0.74, DESK_Y + 0.006, -0.16),
-  mold:    new THREE.Vector3(0.42, DESK_Y, 0.26),
-  basket:  new THREE.Vector3(0.33, DESK_Y, -1.0),
-  bottles: { fairySugar: [0.47, -0.92], starDust: [0.57, -0.92], benzoin: [0.47, -1.08], turmeric: [0.57, -1.08], coconutOil: [0.67, -1.0] },
-  firPot:  new THREE.Vector3(0.78, DESK_Y, -1.0),
+  // the player stands still at STAND (index.html uses the same spot) and everything is laid out within arm's reach:
+  // desk in front (-x), herb tray / basket on the right (-z), magic basin at the left hand, the bookcase drawers
+  // and the fireplace further away (reach them with a pointing pinch in VR, or a click on PC)
+  stand:   new THREE.Vector3(1.0, 0, -0.4),
+  book:    new THREE.Vector3(0.56, DESK_Y, 0.12),
+  mortar:  new THREE.Vector3(0.64, DESK_Y, -0.18),
+  pestle:  new THREE.Vector3(0.77, DESK_Y + 0.012, -0.12),
+  board:   new THREE.Vector3(0.63, DESK_Y, -0.46),
+  knife:   new THREE.Vector3(0.775, DESK_Y + 0.006, -0.44),
+  mold:    new THREE.Vector3(0.68, DESK_Y, 0.06),
+  basket:  new THREE.Vector3(0.78, DESK_Y, -0.96),
+  bottles: { fairySugar: [0.765, -0.62], starDust: [0.765, -0.70], benzoin: [0.765, -0.78], turmeric: [0.68, -0.66], coconutOil: [0.68, -0.75] },
+  firPot:  new THREE.Vector3(0.62, DESK_Y, -0.96),
   drawers: ['rosewood', 'cedarwood', 'cinnamon', 'vanilla', 'eucalyptus', 'ginger'],
-  wrap:    new THREE.Vector3(0.45, DESK_Y, 0.0),
-  letter:  new THREE.Vector3(0.47, DESK_Y, -0.05),
-  basin:   new THREE.Vector3(0.62, 0, -1.6),
+  drawerOut: new THREE.Vector3(0.8, 0.98, -0.08),   // drawer items fly here, in front of the player
+  wrap:    new THREE.Vector3(0.64, DESK_Y, -0.22),
+  letter:  new THREE.Vector3(0.64, DESK_Y, -0.25),
+  basin:   new THREE.Vector3(1.1, 0, 0.22),
   chimney: new THREE.Vector3(-0.42, 0.45, -1.45)
 };
 
@@ -501,6 +505,8 @@ export class Flow {
     for (const f of Object.values(this.fruits)) this.grab(f, { modes: ['pinch', 'fist'], reach: 0.04 });
     // the herb garden tells us when a picked leaf/petal is let go: into the mortar?
     if (this.garden) this.garden.onItemDrop = (it) => this.onHerbDrop(it);
+    // VR: point at something out of reach and pinch -> drawers open, buttons press (herbs.js draws the hand ray)
+    if (this.garden) { this.garden.rayTargets = () => this.clickables(); this.garden.onRayPick = (h, slot) => this.clickHit(h, slot); }
     if (this.garden) { this.garden.blockers.push(this.pages.mesh); }
   }
 
@@ -622,19 +628,25 @@ export class Flow {
     return list;
   }
   onClick(ray) {
-    const hits = ray.intersectObjects(this.clickables(), true); if (!hits.length) return;
-    const h = hits[0]; let o = h.object;
+    const hits = ray.intersectObjects(this.clickables(), true); if (!hits.length) return false;
+    return this.clickHit(hits[0], 'mouse');
+  }
+  // a click (PC) or a pointing pinch from afar (VR hand ray) on a drawer, button, lid, handle, gift or ink pot
+  clickHit(h, who = 'mouse') {
+    const o = h.object;
     const owner = (x) => { for (let q = x; q; q = q.parent) { if (q.userData.panel) return { panel: q.userData.panel }; if (this.drawers.some(d => d.obj === q || d.tag === q)) return { drawer: this.drawers.find(d => d.obj === q || d.tag === q) };
       if (q === this.lid) return { lid: true }; if (q === this.wrapHandle) return { wrap: true }; if (q === this.recvBox) return { recv: true }; if (this.inkPots?.includes(q)) return { ink: q }; } return {}; };
     const w = owner(o);
     if (w.panel) {
-      if (w.panel === this.letterPaper) { this.drawing = true; this.drawAt(h.uv); return; }
-      const id = w.panel.hitUV(h.uv); if (id) this.press(w.panel, id);
+      if (w.panel === this.letterPaper) { if (who !== 'mouse') return false; this.drawing = true; this.drawAt(h.uv); return true; }
+      const id = w.panel.hitUV(h.uv); if (id) this.press(w.panel, id); return !!id;
     } else if (w.drawer) this.toggleDrawer(w.drawer);
     else if (w.lid) this.lidClick();
     else if (w.wrap) this.coverWrap();
     else if (w.recv) this.openReceived();
     else if (w.ink) this.pickInk(w.ink.userData.color);
+    else return false;
+    return true;
   }
   // XR: fingertips press panel buttons, touch drawers/lid/handles, draw on the letter
   fingertips() {
@@ -703,7 +715,7 @@ export class Flow {
   later(sec, fn) { this.timers.push({ t: sec, fn }); }
   viewTarget(dist, yOff = 0) {
     const cam = this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera;
-    const p = wp(cam), d = cam.getWorldDirection(V()); d.y = THREE.MathUtils.clamp(d.y, -0.3, 0.15); d.normalize();
+    const p = wp(cam), d = cam.getWorldDirection(V()); d.y = THREE.MathUtils.clamp(d.y, -0.65, 0.15); d.normalize();
     return p.addScaledVector(d, dist).add(V(0, yOff, 0));
   }
   headPos() { const cam = this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera; return wp(cam); }
@@ -734,6 +746,7 @@ export class Flow {
   begin() {
     if (this.s.step !== 'dark') return;
     this.s.step = 'intro'; this.setHint('', '');
+    if (this.renderer.xr.isPresenting) this.toast('손이 닿지 않는 것은 손으로 가리킨 뒤 집으면 돼요');
     if (!this.bgm) this.bgm = this.sfx('bgm', { loop: true, volume: 0.5 });
     this.later(1.0, () => this.sfx('fire'));
     this.fire?.setLevel(0.12);
@@ -801,7 +814,7 @@ export class Flow {
     this.tween(1.2, k => { const e = ease.inOut(k); this.book.position.lerpVectors(p0, hm.pos, e); this.book.quaternion.slerpQuaternions(q0, hm.quat, e); this.book.scale.lerpVectors(s0, hm.scale, e); });
     this.pages.set({ view: 'work' });
     this.makeMold();
-    this.setHint('03 재료 수집 · 공통 베이스', '오른쪽 뒤 선반에서 요정설탕과 별가루 병을 찾아, 절구 위에서 병을 기울여 쏟아 넣어주세요. (PC: 병을 클릭한 채 절구 위로 끌어가 R 키를 누른 채 기울이기)');
+    this.setHint('03 재료 수집 · 공통 베이스', '작업대 오른쪽의 요정설탕과 별가루 병을 들고, 절구 위에서 병을 기울여 쏟아 넣어주세요. (PC: 병을 클릭한 채 절구 위로 끌어가 R 키를 누른 채 기울이기)');
     this.setMarkers(BASE.map(id => this.bottles[id]));
   }
   needed() { const r = this.s.recipe; return r ? [...BASE, ...r.naturals] : []; }
@@ -905,7 +918,7 @@ export class Flow {
   naturalsHint() {
     const left = this.s.recipe.naturals.filter(id => !this.s.done.has(id));
     const lines = left.map(id => `${ING[id].name}(${LOC[ING[id].location]})`).join(', ');
-    this.setHint('03~04 자연재료 수집 · 손질', `레시피북을 보며 ${lines}${josa(lines, '을', '를')} 모아 손질한 뒤 절구에 넣어주세요.`);
+    this.setHint('03~04 자연재료 수집 · 손질', `레시피북을 보며 ${lines}${josa(lines, '을', '를')} 모아 손질한 뒤 절구에 넣어주세요.${left.some(id => ING[id].location === 'drawer') ? ' 서랍은 멀리 있으니 손으로 가리킨 뒤 집으면 열려요 (PC: 클릭).' : ''}`);
     this.setMarkers(left.map(id => this.locationTarget(id)));
     this.pages.redraw();
   }
@@ -947,8 +960,11 @@ export class Flow {
     it.userData.ing = id; d.item = it;
     if (ING[id].action === 'break' || ING[id].action === 'tear') it.userData.breakable = true;
     this.grab(it, { modes: ['pinch', 'fist'], reach: 0.05 });
-    this.float(it, p);
     this.fx.emit(p, { color: ING[id].color, count: 20, speed: 0.2, life: 0.6 });
+    // the drawers are out of arm's reach: the ingredient flies over to float in front of the player
+    const n = this.drawers.filter(x => x.item && x !== d).length, out = L.drawerOut.clone().add(V(0, 0.06 * n, -0.08 * n));
+    it.userData.home.pos = out.clone();
+    this.tweenTo(it, out, null, 0.9, () => { if (!it.userData.holder) this.float(it, out); });
     this.toast(`${ING[id].name}${josa(ING[id].name, '이', '가')} 나왔어요 · ${ACT[ING[id].action]}`);
   }
 
@@ -1170,13 +1186,13 @@ export class Flow {
       P.button('clear', 10, 10, 360, P.H - 20, '다시 그리기', { color: '#8a6f5e', size: 40 });
       P.button('done', P.W - 370, 10, 360, P.H - 20, '편지 완성', { color: INK.green, size: 40, disabled: !this.strokes.length });
     } });
-    const b = this.letterBtns.mesh; b.position.copy(L.letter).add(V(-0.17, 0.06, 0)); b.rotation.set(0, Math.PI / 2, 0); b.rotateX(-0.5); this.group.add(b);
+    const b = this.letterBtns.mesh; b.position.copy(L.letter).add(V(0.15, 0.05, 0)); b.rotation.set(0, Math.PI / 2, 0); b.rotateX(-0.5); this.group.add(b);
     this.panels.push(this.letterBtns); this.garden?.blockers.push(b);
     this.inkPots = ['#c0392b', '#2e7d32', '#1565c0', '#f9a825', '#6a1b9a'].map((c, i) => {
       const p = this.make('inkPot', () => PH.inkPot(c)); p.userData.color = c;
-      p.position.set(L.letter.x + 0.2, DESK_Y, L.letter.z - 0.12 + i * 0.06); this.group.add(p); return p;
+      p.position.set(L.letter.x + 0.135, DESK_Y, L.letter.z + 0.17 + i * 0.05); this.group.add(p); return p;
     });
-    this.pen = this.make('pen', PH.pen); this.pen.position.set(L.letter.x + 0.2, DESK_Y + 0.006, L.letter.z + 0.22); this.pen.rotation.z = Math.PI / 2; this.group.add(this.pen);
+    this.pen = this.make('pen', PH.pen); this.pen.position.set(L.letter.x + 0.13, DESK_Y + 0.006, L.letter.z - 0.22); this.pen.rotation.z = Math.PI / 2; this.group.add(this.pen);
     this.grab(this.pen, { modes: ['pinch', 'fist'], reach: 0.04, tip: V(0, -0.012, 0) });
     this.setHint('09 그림 편지', '종이에 손가락(또는 펜)으로 그림을 그려 마음을 표현해보세요. 잉크병을 만지면 색이 바뀌어요. 다 그리면 \'편지 완성\'. (PC: 종이 위에서 왼쪽 버튼을 누른 채 마우스로 그리기)');
     this.setMarkers([{ obj: m, off: V(0, 0, 0.06) }]);
@@ -1208,12 +1224,12 @@ export class Flow {
   // ================================================================ send through the magic basin
   toSend() {
     this.s.step = 'send'; this.sent = 0;
-    const a = wp(this.gift), b = L.letter.clone().add(V(0.15, 0.25, -0.15));
+    const a = wp(this.gift), b = L.letter.clone().add(V(0.2, 0.28, 0.12));
     this.tweenTo(this.env, b, null, 0.8, () => this.float(this.env, b));
     for (const o of [this.gift, this.env]) { this.grab(o, { modes: ['pinch', 'fist'], reach: 0.06 }); }
     this.gift.userData.home = { pos: a, quat: new THREE.Quaternion() }; this.env.userData.home = { pos: b, quat: new THREE.Quaternion() };
     this.basin.userData.placeholder.userData.water.material.emissiveIntensity = 1.6;
-    this.setHint('09 마법 수반으로 발송', '떠 있는 선물과 편지를 하나씩 잡아, 벽난로 옆 마법 수반 위에서 놓아주세요. 수반 위에서 손을 놓으면 물속으로 쏙 들어가요.');
+    this.setHint('09 마법 수반으로 발송', '떠 있는 선물과 편지를 하나씩 잡아, 왼쪽의 마법 수반 위에서 놓아주세요. 수반 위에서 손을 놓으면 물속으로 쏙 들어가요.');
     this.setMarkers([this.gift, this.env, { obj: this.basin, off: V(0, 1.05, 0) }]);
   }
   sink(o) {

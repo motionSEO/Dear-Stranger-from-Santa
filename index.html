@@ -46,6 +46,7 @@
   #start span { color:#c9c0b2; font-size:12px; }
   body.locked #start, body.started #start, body.xr #start { display:none; }
   body.locked #hud { opacity:.35; pointer-events:none; }
+  #cams, #mode, #pad { display:none !important; }
   #pad { position:fixed; left:24px; bottom:24px; z-index:12; width:120px; height:120px; border-radius:50%;
     border:1px solid rgba(255,215,170,.3); background:rgba(16,14,12,.35); display:none; touch-action:none; }
   #pad i { position:absolute; left:50%; top:50%; width:46px; height:46px; margin:-23px 0 0 -23px; border-radius:50%;
@@ -71,12 +72,13 @@
       <button id="mode" aria-pressed="true">1인칭 걷기</button>
       <button id="shadows" aria-pressed="true">그림자</button>
     </div>
-    <div style="margin-top:7px;font-size:11px;color:#9c9387"><b style="color:#ffd9a8">체험: 시작하면 벽난로에 불이 붙고 편지가 날아와요. 안내(화면 위)를 따라가요. Space = 행동 · R 누른 채 = 기울이기</b><br>오른쪽 버튼 드래그 = 시점 돌리기 · 왼쪽 클릭 = 상호작용(마우스 커서 위치) · WASD = 걷기 · Shift = 빠르게 · C = 웅크리기<br>허브: 커서를 화분에 두고 왼쪽 클릭 누른 채 = 잎 따기, 떼면 떨어짐 (휠 = 거리) · 머그: 누르고 있으면 마시기
-      <br>퀘스트3 손: 엄지+검지 집기 = 허브 따기 · 주먹 = 머그 잡기 · 빈 곳에 집기 → 가리킨 바닥으로 이동
-      <br>퀘스트3 컨트롤러: 왼쪽 스틱 = 걷기 · 오른쪽 스틱 = 회전 · 트리거 = 집기/이동 · 그립 = 머그</div>
+    <div style="margin-top:7px;font-size:11px;color:#9c9387"><b style="color:#ffd9a8">작업대 앞 제자리에서 체험해요. 시작하면 벽난로에 불이 붙고 편지가 날아와요. 안내(화면 위)를 따라가요.</b>
+      <br>PC: 오른쪽 버튼 드래그 = 둘러보기 · 왼쪽 클릭(누른 채 끌기) = 집기/누르기 · Space = 손 동작 · R 누른 채 = 기울이기 · 휠 = 거리
+      <br>퀘스트3 손: 엄지+검지 집기 / 주먹 = 잡기 · 손가락 끝 = 책·버튼 누르기 · 멀리 있는 것은 손으로 가리키면 빛줄기가 닿고, 그때 집으면 손으로 날아오거나 서랍이 열려요
+      <br>퀘스트3 컨트롤러: 트리거 = 집기(멀리 가리키기 포함) · 그립 = 주먹 · 오른쪽 스틱 = 회전</div>
   </div>
 </div>
-<div id="start"><b>클릭해서 시작하기</b><span>오른쪽 버튼을 누른 채 끌면 둘러보고, 왼쪽 클릭으로 물건을 만지고, WASD로 걸어요</span></div>
+<div id="start"><b>클릭해서 시작하기</b><span>제자리에서 체험해요 · 오른쪽 버튼을 누른 채 끌면 둘러보고, 왼쪽 클릭으로 물건을 만져요</span></div>
 <div id="cross"></div>
 <div id="toast"></div>
 <div id="hint"></div>
@@ -169,6 +171,8 @@ const P = {
   eye: 1.55, eyeStand: 1.55, eyeCrouch: 0.95,
   radius: 0.2, step: 0.32, minHead: 1.05, ceil: 9, walk: 1.25, run: 2.6, gravity: 9.8
 };
+// The player stays in one spot at the work desk (no walking, no teleport): only the view turns.
+const STAND = { feet: new THREE.Vector3(1.0, 0, -0.4), yaw: Math.PI / 2, pitch: -0.95 };
 let walkMode = true;               // false = free-fly (no collision), for inspecting the scene
 let yaw = 0, pitch = 0;
 const keys = new Set();
@@ -343,6 +347,7 @@ function inputVector() {             // x = strafe, y = forward, from keys or th
 }
 function moveStep(dt) {
   if (renderer.xr.isPresenting) return;
+  if (STAND) { P.eye = P.eyeStand; placeCamera(); return; }   // fixed spot: mouse look only
   const crouch = keys.has('KeyC') || keys.has('ControlLeft');
   // duck automatically under rafters and the sloping roof (attic!), C = crouch on purpose
   const target = Math.min(crouch ? P.eyeCrouch : P.eyeStand, P.ceil - 0.14);
@@ -383,6 +388,7 @@ function vrStep(dt) {
     rig.position.sub(_head).applyAxisAngle(UP, a).add(_head);
     rig.rotation.y += a; snapReady = false;
   } else if (Math.abs(turn) < 0.3) snapReady = true;
+  if (STAND) return;                                       // fixed spot: snap turn only, no stick walking / teleport
   const dead = 0.15;
   if (Math.hypot(mx, my) < dead) { mx = 0; my = 0; }
   xrCam.getWorldDirection(_fwd); _fwd.y = 0; _fwd.normalize();
@@ -397,6 +403,12 @@ function vrStep(dt) {
   teleportStep();
 }
 
+function applyStand() {
+  const fy = colliders.length ? floorAt(STAND.feet.x, 0.3, STAND.feet.z) : null;
+  P.feet.set(STAND.feet.x, fy ?? 0, STAND.feet.z); yaw = STAND.yaw; pitch = STAND.pitch;
+  rig.position.copy(P.feet); rig.rotation.set(0, yaw, 0);
+  placeCamera();
+}
 function applyView(v) {
   const p = B2T(v.pos), t = B2T(v.target);
   const dir = t.clone().sub(p).normalize();
@@ -496,7 +508,7 @@ renderer.xr.addEventListener('sessionend', () => {
   placeCamera();
 });
 const camRow = document.getElementById('cams');
-Object.keys(VIEWS).forEach((name, i) => {
+if (!STAND) Object.keys(VIEWS).forEach((name, i) => {
   const b = document.createElement('button');
   b.textContent = name;
   b.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
@@ -507,7 +519,7 @@ Object.keys(VIEWS).forEach((name, i) => {
   };
   camRow.appendChild(b);
 });
-applyView(VIEWS['시작 위치']);
+applyStand();
 
 // ---------------------------------------------------------------- post
 const composer = new EffectComposer(renderer);
@@ -802,7 +814,7 @@ function onRoom(gltf) {
   window.__dbg = { THREE, scene, root, camera, renderer, composer, box, lights, P, colliders, setLook: (y, p = 0) => { yaw = y; pitch = p; },
     sim: (y, sec, key = 'KeyW') => { yaw = y; keys.add(key); for (let i = 0; i < sec * 60; i++) moveStep(1 / 60); keys.delete(key); return [P.feet.x, P.feet.y, P.feet.z, P.eye].map(v => +v.toFixed(2)); } };
   buildColliders(root);
-  if (currentView) applyView(currentView);    // drop onto the real floor now that it exists
+  applyStand();    // stand on the real floor now that it exists
   document.getElementById('loading').classList.add('done');
   // the experience: letter at the fireplace -> recipe book -> make a bath bomb -> wrap -> letter -> send
   import('./modules/flow.js').then(({ startFlow }) => {

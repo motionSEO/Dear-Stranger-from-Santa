@@ -66,6 +66,9 @@ window.herbsReady = Promise.all([
       this.grabbables = [];       // external (mug.js etc.)
       this.blockers = [];         // UI panels etc.: a click that lands on one is not ours
       this.hands = [];            // XR input slots
+      this.pulls = [];            // things flying into a hand after a pointing pinch
+      this.rayTargets = null;     // () => extra objects a hand ray can point at (drawers, buttons...)
+      this.onRayPick = null;      // (hit, slot) => true if the page handled a pointing pinch on one of them
       this.mouse = null;
       this.ray = new THREE.Raycaster();
       this.plants = [];
@@ -168,12 +171,17 @@ window.herbsReady = Promise.all([
           point: new THREE.Vector3(), pinch: false, fist: false, held: null,
           pinchAnchor: new THREE.Group(), fistAnchor: new THREE.Group(), pinchAim: false };
         rig.add(slot.pinchAnchor, slot.fistAnchor);
+        slot.rayLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]),
+          new THREE.LineBasicMaterial({ color: 0xffd9a8, transparent: true, opacity: 0.55, depthWrite: false }));
+        slot.rayDot = new THREE.Mesh(new THREE.SphereGeometry(0.008, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffe9a8, toneMapped: false }));
+        slot.rayLine.frustumCulled = false; slot.rayLine.visible = slot.rayDot.visible = false;
+        this.scene.add(slot.rayLine, slot.rayDot);
         const onConn = (e) => { slot.connected = true; slot.handedness = e.data.handedness; slot.isHand = !!e.data.hand; };
         const onDisc = () => { this.grabEnd(slot); slot.connected = false; slot.pinch = slot.fist = false; };
         hand.addEventListener('connected', onConn); hand.addEventListener('disconnected', onDisc);
         ctrl.addEventListener('connected', onConn); ctrl.addEventListener('disconnected', onDisc);
         // controllers: trigger = pinch, grip button = fist
-        ctrl.addEventListener('selectstart', () => { if (slot.isHand) return; slot.pinch = true; this.grabStart(slot, 'pinch') || (slot.pinchAim = true); });
+        ctrl.addEventListener('selectstart', () => { if (slot.isHand) return; slot.pinch = true; this.grabStart(slot, 'pinch') || this.rayGrab(slot) || (slot.pinchAim = true); });
         ctrl.addEventListener('selectend',   () => { if (slot.isHand) return; slot.pinch = false; slot.pinchAim = false; this.grabEnd(slot); });
         ctrl.addEventListener('squeezestart', () => { if (slot.isHand) return; slot.fist = true; if (!slot.held) this.grabStart(slot, 'fist'); });
         ctrl.addEventListener('squeezeend',   () => { if (slot.isHand) return; slot.fist = false; if (slot.held && slot.held.type === 'ext') this.grabEnd(slot); });
@@ -205,7 +213,7 @@ window.herbsReady = Promise.all([
           s.pinch = wasP ? pinchD < 0.035 : pinchD < 0.018;
           s.fist = wasF ? curl < 0.125 : curl < 0.095;
           if (s.fist && !wasF && !s.held) { s.point.copy(palm); if (!this.grabStart(s, 'fist')) s.point.copy(pIt).add(pTh).multiplyScalar(0.5); }
-          if (s.pinch && !wasP && !s.held) { s.point.copy(pIt).add(pTh).multiplyScalar(0.5); s.pinchAim = !this.grabStart(s, 'pinch'); }
+          if (s.pinch && !wasP && !s.held) { s.point.copy(pIt).add(pTh).multiplyScalar(0.5); s.pinchAim = !this.grabStart(s, 'pinch') && !this.rayGrab(s); }
           if (!s.pinch) s.pinchAim = false;
           if (s.held && !s.fist && !s.pinch) this.grabEnd(s);   // open hand = let go
         } else {
@@ -216,7 +224,77 @@ window.herbsReady = Promise.all([
           s.fistAnchor.position.copy(s.pinchAnchor.position); s.fistAnchor.quaternion.copy(s.grip.quaternion);
           s.palm = s.point;
         }
+        this.updatePointer(s);
       }
+    }
+
+    // ------------------------------------------------------------- hand ray: point at something out of reach, pinch to take / press it
+    pointerRay(s, origin, dir) {
+      if (s.isHand) {     // shoulder -> pinch point, like the system hand ray
+        const cam = this.renderer.xr.getCamera(), head = cam.getWorldPosition(new THREE.Vector3());
+        const fwd = cam.getWorldDirection(new THREE.Vector3()); fwd.y = 0; fwd.normalize();
+        const right = new THREE.Vector3(-fwd.z, 0, fwd.x), side = s.handedness === 'left' ? -1 : 1;
+        const shoulder = head.add(new THREE.Vector3(0, -0.2, 0)).addScaledVector(right, 0.16 * side);
+        const J = s.hand.joints, k = J?.['index-finger-phalanx-proximal'];
+        origin.copy(k ? k.getWorldPosition(_v2) : s.point);
+        dir.subVectors(origin, shoulder).normalize();
+      } else {
+        s.ctrl.getWorldPosition(origin);
+        dir.set(0, 0, -1).applyQuaternion(s.ctrl.getWorldQuaternion(new THREE.Quaternion()));
+      }
+    }
+    pointerHit(s) {
+      const o = new THREE.Vector3(), d = new THREE.Vector3(); this.pointerRay(s, o, d);
+      this.ray.set(o, d); this.ray.near = 0; this.ray.far = 4;
+      const plants = this.plants.filter(p => p.mesh.visible), items = this.items.filter(i => !i.held);
+      const grabs = this.grabbables.filter(g => !g.held && g.enabled !== false && g.object.visible);
+      const extra = this.rayTargets?.() || [];
+      const hits = this.ray.intersectObjects([...plants.map(p => p.mesh), ...items.map(i => i.mesh), ...grabs.map(g => g.object), ...extra], true);
+      for (const h of hits) {
+        if (h.distance < 0.06) continue;
+        const g = grabs.find(g => { for (let q = h.object; q; q = q.parent) if (q === g.object) return true; return false; });
+        if (g) return { kind: 'ext', g, hit: h, origin: o };
+        const it = items.find(i => i.mesh === h.object); if (it) return { kind: 'item', it, hit: h, origin: o };
+        const p = plants.find(p => p.mesh === h.object); if (p) return { kind: 'plant', p, hit: h, origin: o };
+        return { kind: 'extra', hit: h, origin: o };
+      }
+      // aim assist: nothing hit exactly -> the nearest thing within a few degrees of the ray
+      let best = null, ba = 0.07;
+      const tryC = (obj, make) => {
+        const c = _box.setFromObject(obj).getCenter(new THREE.Vector3()), v = c.clone().sub(o), dist = v.length();
+        if (dist < 0.15 || dist > 4) return;
+        const ang = v.angleTo(d); if (ang < ba) { ba = ang; best = make({ point: c, distance: dist, object: obj }); }
+      };
+      for (const g of grabs) tryC(g.object, hit => ({ kind: 'ext', g, hit, origin: o }));
+      for (const it of items) tryC(it.mesh, hit => ({ kind: 'item', it, hit, origin: o }));
+      for (const p of plants) tryC(p.mesh, hit => ({ kind: 'plant', p, hit, origin: o }));
+      return best;
+    }
+    updatePointer(s) {
+      const show = s.connected && !s.held && !(s.isHand && s.fist);
+      s.aim = show ? this.pointerHit(s) : null;
+      const a = s.aim, on = !!a && a.hit.distance > 0.12;
+      s.rayLine.visible = s.rayDot.visible = on;
+      if (!on) return;
+      s.rayLine.geometry.setFromPoints([a.origin, a.hit.point]);
+      s.rayDot.position.copy(a.hit.point);
+    }
+    rayGrab(s) {
+      const a = this.pointerHit(s); if (!a || a.hit.distance <= 0.12) return false;
+      const anchor = s.pinchAnchor;
+      if (a.kind === 'ext') { a.g.held = s; a.g.onGrab?.(anchor, s); s.held = { type: 'ext', g: a.g }; this.pullIn(anchor, a.g.object); }
+      else if (a.kind === 'item') { this.falling = this.falling.filter(f => f.it !== a.it); a.it.held = s; anchor.attach(a.it.mesh); s.held = { type: 'item', it: a.it }; this.pullIn(anchor, a.it.mesh); }
+      else if (a.kind === 'plant') { const it = this.harvest(a.p, a.hit.point); it.held = s; anchor.attach(it.mesh); s.held = { type: 'item', it }; this.pullIn(anchor, it.mesh); }
+      else return !!this.onRayPick?.(a.hit, s);
+      s.rayLine.visible = s.rayDot.visible = false;
+      return true;
+    }
+    pullIn(anchor, obj) {     // fly the thing into the hand (its centre onto the pinch point)
+      if (obj.parent !== anchor) return;
+      obj.updateWorldMatrix(true, true);
+      const c = anchor.worldToLocal(new THREE.Box3().setFromObject(obj).getCenter(new THREE.Vector3()));
+      this.pulls = this.pulls.filter(p => p.obj !== obj);
+      this.pulls.push({ obj, anchor, t: 0, from: obj.position.clone(), to: obj.position.clone().sub(c) });
     }
 
     // ------------------------------------------------------------- mouse (PC)
@@ -255,6 +333,12 @@ window.herbsReady = Promise.all([
     update(dt) {
       dt = Math.min(dt, 0.05);
       if (this.renderer?.xr.isPresenting) this.updateHands();
+      for (let k = this.pulls.length - 1; k >= 0; k--) {
+        const p = this.pulls[k]; p.t = Math.min(1, p.t + dt / 0.3);
+        if (p.obj.parent !== p.anchor) { this.pulls.splice(k, 1); continue; }
+        const e = 1 - Math.pow(1 - p.t, 3); p.obj.position.lerpVectors(p.from, p.to, e);
+        if (p.t >= 1) this.pulls.splice(k, 1);
+      }
       const m = this.mouse;
       if (m?.held) {     // the piece hangs in front of the camera along the pointer ray
         this.ray.setFromCamera(m.ndc, this.camera);
