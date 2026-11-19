@@ -64,7 +64,7 @@ window.mugReady = (window.herbsReady || Promise.resolve()).then(() => import('th
 
     // where the mouth is: a bit below and in front of the eyes
     mouth(out) {
-      const cam = this.garden.renderer?.xr.isPresenting ? this.garden.renderer.xr.getCamera() : this.camera;
+      const cam = this.camera;   // in VR the user camera rides in the rig and is kept in sync with the headset
       cam.getWorldPosition(out);
       const fwd = cam.getWorldDirection(_v.clone()); fwd.y = 0; fwd.normalize();
       return out.addScaledVector(fwd, 0.03).add(new THREE.Vector3(0, -0.08, 0));

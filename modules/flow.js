@@ -714,19 +714,21 @@ export class Flow {
   stopTween(owner) { this.tweens = this.tweens.filter(t => t.owner !== owner); }
   later(sec, fn) { this.timers.push({ t: sec, fn }); }
   viewTarget(dist, yOff = 0) {
-    const cam = this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera;
+    const cam = this.camera;
     const p = wp(cam), d = cam.getWorldDirection(V()); d.y = THREE.MathUtils.clamp(d.y, -0.65, 0.15); d.normalize();
     return p.addScaledVector(d, dist).add(V(0, yOff, 0));
   }
   // the view without head roll: position + straight-ahead / up / right axes
+  // NB: always the user camera. In VR three keeps it (a child of the rig) in sync with the headset; renderer.xr.getCamera()
+  // has no parent, so its getWorldQuaternion() would drop the rig's turn and the UI would face sideways.
   viewFrame() {
-    const cam = this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera;
+    const cam = this.camera;
     const e = new THREE.Euler().setFromQuaternion(cam.getWorldQuaternion(new THREE.Quaternion()), 'YXZ'); e.z = 0;
     const q = new THREE.Quaternion().setFromEuler(e);
     return { head: wp(cam), q, f: V(0, 0, -1).applyQuaternion(q), u: V(0, 1, 0).applyQuaternion(q), r: V(1, 0, 0).applyQuaternion(q) };
   }
   viewFront(dist, up = 0, right = 0) { const v = this.viewFrame(); return v.head.addScaledVector(v.f, dist).addScaledVector(v.u, up).addScaledVector(v.r, right); }
-  headPos() { const cam = this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera; return wp(cam); }
+  headPos() { const cam = this.camera; return wp(cam); }
   follow(obj, opts = {}) { this.unfollow(obj); this.follows.push({ obj, dist: 0.5, yOff: -0.1, speed: 4, face: true, ...opts }); }
   unfollow(obj) { this.follows = this.follows.filter(f => f.obj !== obj); }
   float(obj, base) { this.unfloat(obj); this.floaters.push({ obj, base: base.clone(), ph: Math.random() * 6 }); }
@@ -1373,7 +1375,7 @@ export class Flow {
     // follow the view
     const head = this.headPos();
     // UI that follows the view (letter, recipe book): straight in front of the eyes, square to the view, no roll
-    const vcam = this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera;
+    const vcam = this.camera;
     const ve = new THREE.Euler().setFromQuaternion(vcam.getWorldQuaternion(new THREE.Quaternion()), 'YXZ'); ve.z = 0;
     const vq = new THREE.Quaternion().setFromEuler(ve), vf = V(0, 0, -1).applyQuaternion(vq), vu = V(0, 1, 0).applyQuaternion(vq);
     for (const f of this.follows) {
@@ -1400,10 +1402,10 @@ export class Flow {
     // VR hint panel follows lazily, a bit above the view
     if (this.renderer.xr.isPresenting && (this.hint.state.title || this.hint.state.body)) {
       const m = this.hint.mesh; m.visible = true;
-      const target = this.viewTarget(0.9, 0.28), cur = m.position;
-      if (cur.distanceTo(target) > 0.35 || !this.hintPlaced) { this.hintPlaced = true; this.hintGoal = target; }
-      if (this.hintGoal) cur.lerp(this.hintGoal, 1 - Math.exp(-dt * 3));
-      m.lookAt(head);
+      const target = this.viewFront(0.9, 0.24), cur = m.position;   // above the book / letter, square to the view
+      if (cur.distanceTo(target) > 0.2 || !this.hintPlaced) { this.hintPlaced = true; this.hintGoal = target; }
+      if (this.hintGoal) cur.lerp(this.hintGoal, 1 - Math.exp(-dt * 4));
+      m.quaternion.slerp(vq, 1 - Math.exp(-dt * 6));
     } else this.hint.mesh.visible = false;
 
     // mouse-held object: in front of the camera, drawn toward the station it is aimed at

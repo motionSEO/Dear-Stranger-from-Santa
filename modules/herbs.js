@@ -231,7 +231,7 @@ window.herbsReady = Promise.all([
     // ------------------------------------------------------------- hand ray: point at something out of reach, pinch to take / press it
     pointerRay(s, origin, dir) {
       if (s.isHand) {     // shoulder -> pinch point, like the system hand ray
-        const cam = this.renderer.xr.getCamera(), head = cam.getWorldPosition(new THREE.Vector3());
+        const cam = this.camera, head = cam.getWorldPosition(new THREE.Vector3());
         const fwd = cam.getWorldDirection(new THREE.Vector3()); fwd.y = 0; fwd.normalize();
         const right = new THREE.Vector3(-fwd.z, 0, fwd.x), side = s.handedness === 'left' ? -1 : 1;
         const shoulder = head.add(new THREE.Vector3(0, -0.2, 0)).addScaledVector(right, 0.16 * side);

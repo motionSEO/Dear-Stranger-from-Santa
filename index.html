@@ -381,7 +381,7 @@ function vrStep(dt) {
     if (src.handedness === 'left')  { mx = ax; my = ay; }
     if (src.handedness === 'right') turn = ax;
   }
-  const xrCam = renderer.xr.getCamera();
+  const xrCam = camera;   // the user camera (child of the rig) carries the headset pose in world space
   xrCam.getWorldPosition(_head);
   if (Math.abs(turn) > 0.7 && snapReady) {                // rotate the rig around the head
     const a = -Math.sign(turn) * Math.PI / 6;
@@ -456,7 +456,7 @@ function teleportStep() {
   const aims = garden ? garden.aimingHands() : [];
   if (tpSlot && !aims.includes(tpSlot)) {                 // released: jump
     if (tpTarget) {
-      renderer.xr.getCamera().getWorldPosition(_head);
+      camera.getWorldPosition(_head);
       rig.position.x += tpTarget.x - _head.x; rig.position.z += tpTarget.z - _head.z; rig.position.y = tpTarget.y;
       P.feet.set(tpTarget.x, tpTarget.y, tpTarget.z);
     }
