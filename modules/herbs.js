@@ -196,6 +196,10 @@ window.herbsReady = Promise.all([
         if (s.isHand && J && J['index-finger-tip'] && J['thumb-tip'] && J['wrist']) {
           const it = J['index-finger-tip'], th = J['thumb-tip'], wr = J['wrist'];
           const pIt = it.getWorldPosition(new THREE.Vector3()), pTh = th.getWorldPosition(new THREE.Vector3()), pWr = wr.getWorldPosition(new THREE.Vector3());
+          // show the hand mesh only while it is really tracked and away from the eyes (a lost / not yet tracked hand
+          // keeps a stale or default pose that can end up right in front of the face)
+          const headP = this.camera ? this.camera.getWorldPosition(_v2) : null;
+          s.hand.visible = wr.visible !== false && it.visible !== false && !(headP && pWr.distanceTo(headP) < 0.2);
           const pinchD = pIt.distanceTo(pTh);
           let curl = 0, n = 0;
           for (const f of ['index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-finger-tip']) if (J[f]) { curl += J[f].getWorldPosition(_v).distanceTo(pWr); n++; }
@@ -217,6 +221,7 @@ window.herbsReady = Promise.all([
           if (!s.pinch) s.pinchAim = false;
           if (s.held && !s.fist && !s.pinch) this.grabEnd(s);   // open hand = let go
         } else {
+          if (s.isHand) s.hand.visible = false;     // a hand without joint data yet: nothing sensible to draw
           // controller: anchors ride on the grip
           s.grip.getWorldPosition(s.point);
           s.pinchAnchor.parent.worldToLocal(s.pinchAnchor.position.copy(s.point));

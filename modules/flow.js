@@ -79,7 +79,7 @@ const L = {
   bottles: { fairySugar: [0.765, -0.62], starDust: [0.765, -0.70], benzoin: [0.765, -0.78], turmeric: [0.68, -0.66], coconutOil: [0.68, -0.75] },
   firPot:  new THREE.Vector3(0.62, DESK_Y, -0.96),
   drawers: ['rosewood', 'cedarwood', 'cinnamon', 'vanilla', 'eucalyptus', 'ginger'],
-  drawerOut: new THREE.Vector3(0.8, 0.98, -0.08),   // drawer items fly here, in front of the player
+  drawerOut: new THREE.Vector3(0.56, DESK_Y + 0.06, -0.32),   // drawer items fly over and land here, in front of the player
   wrap:    new THREE.Vector3(0.64, DESK_Y, -0.22),
   letter:  new THREE.Vector3(0.64, DESK_Y, -0.25),
   basin:   new THREE.Vector3(1.1, 0, 0.22),
@@ -369,6 +369,8 @@ const PH = {
 export class Flow {
   constructor(ctx) {
     Object.assign(this, ctx);        // scene, root, camera, renderer, rig, garden, canvas, fire, toast, hintEl, P, cast
+    const domToast = this.toast;
+    this.toast = (m) => { domToast?.(m); if (this.renderer.xr.isPresenting) this.notice(m, '', false); };
     this.group = new THREE.Group(); this.group.name = 'Flow'; this.scene.add(this.group);
     this.fx = new FX(this.scene);
     this.tweens = []; this.timers = []; this.follows = []; this.floaters = []; this.markers = [];
@@ -566,9 +568,11 @@ export class Flow {
     this.tweenTo(obj, hm.pos, hm.quat, dur);
   }
   tweenTo(obj, pos, quat, dur = 0.6, done) {
-    const p0 = obj.position.clone(), q0 = obj.quaternion.clone(), p1 = this.group.worldToLocal(pos.clone());
+    const par = obj.parent || this.group; par.updateWorldMatrix(true, false);
+    const p0 = obj.position.clone(), q0 = obj.quaternion.clone(), p1 = par.worldToLocal(pos.clone());
+    const q1 = quat ? par.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(quat) : null;
     this.stopTween(obj);
-    this.tween(dur, k => { const e = ease.inOut(k); obj.position.lerpVectors(p0, p1, e); if (quat) obj.quaternion.slerpQuaternions(q0, quat, e); }, done, obj);
+    this.tween(dur, k => { const e = ease.inOut(k); obj.position.lerpVectors(p0, p1, e); if (q1) obj.quaternion.slerpQuaternions(q0, q1, e); }, done, obj);
   }
 
   // where a held thing is "over": XR = really above it; mouse = the pointer ray passes near it
@@ -743,6 +747,29 @@ export class Flow {
     });
   }
 
+  // ---------------------------------------------------------------- notices (in front of the eyes, PC and VR)
+  notice(title, body = '', warn = false) {
+    if (!this.noticePanel) {
+      this.noticePanel = new Panel({ w: 0.36, h: 0.09, px: 900, name: 'NoticePanel', draw: (g, P) => {
+        const st = P.state; if (!st.title) return;
+        P.round(6, 6, P.W - 12, P.H - 12, 30); g.fillStyle = st.warn ? 'rgba(150,28,28,.92)' : 'rgba(20,14,10,.85)'; g.fill();
+        g.lineWidth = 5; g.strokeStyle = st.warn ? '#ffb3a8' : '#e0a05a'; g.stroke();
+        P.text(st.title, P.W / 2, st.body ? 30 : P.H / 2 - 26, { size: 42, weight: 700, color: '#fff', align: 'center' });
+        if (st.body) P.text(st.body, P.W / 2, 92, { size: 28, color: '#ffe9e2', align: 'center' });
+      } });
+      this.noticePanel.mesh.renderOrder = 10; this.noticePanel.mesh.material.depthTest = false; this.scene.add(this.noticePanel.mesh);
+    }
+    this.noticePanel.set({ title, body, warn }); this.noticeT = warn ? 2.6 : 1.8;
+  }
+  warn(title, body) { this.notice(title, body, true); this.sfx('wrong'); if (!this.renderer.xr.isPresenting) this.toast(title); }
+  updateNotice(dt) {
+    const m = this.noticePanel?.mesh; if (!m) return;
+    this.noticeT = Math.max(0, (this.noticeT || 0) - dt); m.visible = this.noticeT > 0;
+    if (!m.visible) return;
+    const v = this.viewFrame(); m.position.copy(v.head).addScaledVector(v.f, 0.5).addScaledVector(v.u, -0.06); m.quaternion.copy(v.q);
+    m.material.opacity = Math.min(1, this.noticeT * 3); m.material.transparent = true;
+  }
+
   // ---------------------------------------------------------------- hints
   setHint(title, body, accent) {
     this.hint.set({ title, body, accent });
@@ -888,7 +915,7 @@ export class Flow {
   // ================================================================ 03–04 ingredients
   canAdd(id) {
     const st = this.s.step;
-    if (!this.needed().includes(id)) { this.toast(`${ING[id].name}${josa(ING[id].name, '은', '는')} 이번 레시피에 없는 재료예요`); return false; }
+    if (!this.needed().includes(id)) { this.warn('맞지 않는 재료입니다.', `${ING[id].name}${josa(ING[id].name, '은', '는')} 이번 레시피에 들어가지 않아요`); return false; }
     if (this.s.done.has(id)) { this.toast(`${ING[id].name}${josa(ING[id].name, '은', '는')} 이미 넣었어요`); return false; }
     if (!ING[id].base && !BASE.every(b => this.s.done.has(b))) { this.toast('먼저 공통 베이스(요정설탕, 별가루)를 넣어주세요'); return false; }
     if (!['base', 'naturals'].includes(st)) return false;
@@ -972,9 +999,9 @@ export class Flow {
     this.grab(it, { modes: ['pinch', 'fist'], reach: 0.05 });
     this.fx.emit(p, { color: ING[id].color, count: 20, speed: 0.2, life: 0.6 });
     // the drawers are out of arm's reach: the ingredient flies over to float in front of the player
-    const n = this.drawers.filter(x => x.item && x !== d).length, out = L.drawerOut.clone().add(V(0, 0.06 * n, -0.08 * n));
+    const n = this.drawers.filter(x => x.item && x !== d).length, out = L.drawerOut.clone().add(V(0.07 * n, 0, 0));
     it.userData.home.pos = out.clone();
-    this.tweenTo(it, out, null, 0.9, () => { if (!it.userData.holder) this.float(it, out); });
+    this.tweenTo(it, out, null, 0.9, () => { if (!it.userData.holder) this.restBelow(it); });
     this.toast(`${ING[id].name}${josa(ING[id].name, '이', '가')} 나왔어요 · ${ACT[ING[id].action]}`);
   }
 
@@ -991,7 +1018,7 @@ export class Flow {
     const d = this.drawers.find(x => x.id === id); if (d) d.item = pieces;
     this.fx.emit(p, { color: ING[id].color, count: 24, speed: 0.3, gravity: 0.8, life: 0.6 });
     this.toast(ING[id].action === 'tear' ? '찢었어요! 절구에 넣어주세요' : '부러뜨렸어요! 절구에 넣어주세요');
-    if (!pieces.userData.holder) this.float(pieces, p);
+    if (!pieces.userData.holder) this.restBelow(pieces);
   }
 
   // knife: cut what lies on the board
@@ -1145,7 +1172,7 @@ export class Flow {
     }
     // the bath bomb floats up, the wrapping paper is laid out
     const bomb = this.bomb; this.group.attach(bomb);
-    const up = wp(bomb).add(V(0.1, 0.16, -0.05)); this.tweenTo(bomb, up, null, 0.8, () => this.float(bomb, up));
+    const up = wp(this.mold || bomb).add(V(0.06, 0, 0.14)); up.y = DESK_Y; this.tweenTo(bomb, up, new THREE.Quaternion(), 0.8, () => this.restBelow(bomb));
     this.wrap = this.make('wrapPaper', () => PH.wrapPaper(this.wrapTex)); this.wrap.position.copy(L.wrap); this.wrap.rotation.y = Math.PI / 2; this.group.add(this.wrap);
     this.wrapHandle = this.wrap.userData.placeholder.userData.handle;
     this.wrapHandle.visible = false;
@@ -1183,7 +1210,7 @@ export class Flow {
   toLetter() {
     this.s.step = 'letter';
     this.strokes = []; this.inkColor = '#c0392b';
-    const gp = wp(this.gift).add(V(0.12, 0.2, 0.32)); this.tweenTo(this.gift, gp, null, 0.8, () => this.float(this.gift, gp));
+    const gp = wp(this.gift).add(V(0.06, 0, 0.3)); this.tweenTo(this.gift, gp, null, 0.8, () => this.restBelow(this.gift));
     this.letterPaper = new Panel({ w: 0.26, h: 0.19, px: 760, transparent: false, name: 'LetterPaper', draw: (g, P) => {
       if (!P.bg) { g.fillStyle = '#fbf5e8'; g.fillRect(0, 0, P.W, P.H); }
       g.strokeStyle = '#eadfc8'; g.lineWidth = 2; for (let y = 60; y < P.H; y += 50) { g.beginPath(); g.moveTo(30, y); g.lineTo(P.W - 30, y); g.stroke(); }
@@ -1235,7 +1262,7 @@ export class Flow {
   toSend() {
     this.s.step = 'send'; this.sent = 0;
     const a = wp(this.gift), b = L.letter.clone().add(V(0.2, 0.28, 0.12));
-    this.tweenTo(this.env, b, null, 0.8, () => this.float(this.env, b));
+    this.tweenTo(this.env, b, null, 0.8, () => this.restBelow(this.env));
     for (const o of [this.gift, this.env]) { this.grab(o, { modes: ['pinch', 'fist'], reach: 0.06 }); }
     this.gift.userData.home = { pos: a, quat: new THREE.Quaternion() }; this.env.userData.home = { pos: b, quat: new THREE.Quaternion() };
     this.basin.userData.placeholder.userData.water.material.emissiveIntensity = 1.6;
@@ -1323,7 +1350,7 @@ export class Flow {
     // ingredients that go to the board first
     if ((ING[id]?.action === 'cutSqueeze' && (o === this.fruits[id])) || (id === 'ginger' && !o.userData.squeeze)) {
       if (this.over(o, this.zones.board)) {
-        if (!this.needed().includes(id)) { this.toast(`${ING[id].name}${josa(ING[id].name, '은', '는')} 이번 레시피에 없는 재료예요`); return this.homeOrFloat(o); }
+        if (!this.needed().includes(id)) { this.warn('맞지 않는 재료입니다.', `${ING[id].name}${josa(ING[id].name, '은', '는')} 이번 레시피에 들어가지 않아요`); return this.homeOrFloat(o); }
         if (this.board.userData.item && this.board.userData.item !== o) { this.toast('도마 위에 이미 재료가 있어요'); return this.homeOrFloat(o); }
         this.board.userData.item = o; o.userData.onBoard = true;
         this.tweenTo(o, wp(this.board, V(0, 0.016, 0)), new THREE.Quaternion(), 0.3);
@@ -1349,17 +1376,28 @@ export class Flow {
     if (o === this.lid && st === 'open') return this.openLid();
     return this.homeOrFloat(o);
   }
-  homeOrFloat(o) {
-    const hm = o.userData.home; if (!hm) return;
-    if (this.floatHome(o)) return;
-    this.goHome(o);
+  homeOrFloat(o) {      // let go somewhere else: it drops onto the desk / shelf right below (only the floor sends it back)
+    if (this.restBelow(o)) return;
+    if (o.userData.home) this.goHome(o);
   }
-  floatHome(o) {
-    if (o === this.gift || o === this.env || o === this.bomb || this.drawers.some(d => d.item === o) || o.userData.pairId) {
-      const p = o.userData.home.pos; this.tweenTo(o, p, null, 0.5, () => { if (!o.userData.pairId && !o.userData.onBoard) this.float(o, p); }); return true;
-    }
-    return false;
+  // put a thing down on the furniture surface under it, upright (keeps its turn), with a short drop
+  restBelow(o, dur = 0.35) {
+    if (!o.parent) return false;
+    this.unfloat(o); this.group.attach(o); o.updateWorldMatrix(true, true);
+    const proxy = o.userData.hitProxy; if (proxy) o.remove(proxy);      // the invisible hit box is not part of the shape
+    const p = wp(o), bb = new THREE.Box3().setFromObject(o); if (proxy) o.add(proxy);
+    const bottom = p.y - bb.min.y;
+    const r = new THREE.Raycaster(p.clone().setY(Math.max(p.y, bb.max.y) + 0.25), V(0, -1, 0), 0, 4);
+    const own = (x) => { for (let q = x; q; q = q.parent) if (q === this.group) return true; return false; };
+    const hit = r.intersectObject(this.root, true).find(h => h.object.visible && !own(h.object) && h.face && h.face.normal.y > -0.2);
+    if (!hit || hit.point.y < 0.35) return false;             // floor or nothing: not a place to leave it
+    const yaw = new THREE.Euler().setFromQuaternion(o.getWorldQuaternion(new THREE.Quaternion()), 'YXZ').y;
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0));
+    o.userData.restAt = hit.point.clone().add(V(0, bottom + 0.001, 0));
+    this.tweenTo(o, o.userData.restAt, q, dur);
+    return true;
   }
+
   cleanupPair(o) {
     if (o.userData.pairId) for (const x of [...this.grabs]) if (x !== o && x.userData.pairId === o.userData.pairId && x.parent) { this.ungrab(x); const s0 = x.scale.clone(); this.tween(0.4, k => x.scale.copy(s0).multiplyScalar(1 - k), () => x.removeFromParent()); }
     const d = this.drawers.find(x => x.item === o); if (d) d.item = null;
@@ -1436,6 +1474,7 @@ export class Flow {
     // continuous checks: pouring, sprinkling, knife, pestle, two-hand break, mortar into mold
     this.continuous(dt);
     if (this.renderer.xr.isPresenting) this.updateTouch(dt);
+    this.updateNotice(dt);
     this.fx.update(dt);
   }
   continuous(dt) {
