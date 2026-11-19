@@ -718,6 +718,14 @@ export class Flow {
     const p = wp(cam), d = cam.getWorldDirection(V()); d.y = THREE.MathUtils.clamp(d.y, -0.65, 0.15); d.normalize();
     return p.addScaledVector(d, dist).add(V(0, yOff, 0));
   }
+  // the view without head roll: position + straight-ahead / up / right axes
+  viewFrame() {
+    const cam = this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera;
+    const e = new THREE.Euler().setFromQuaternion(cam.getWorldQuaternion(new THREE.Quaternion()), 'YXZ'); e.z = 0;
+    const q = new THREE.Quaternion().setFromEuler(e);
+    return { head: wp(cam), q, f: V(0, 0, -1).applyQuaternion(q), u: V(0, 1, 0).applyQuaternion(q), r: V(1, 0, 0).applyQuaternion(q) };
+  }
+  viewFront(dist, up = 0, right = 0) { const v = this.viewFrame(); return v.head.addScaledVector(v.f, dist).addScaledVector(v.u, up).addScaledVector(v.r, right); }
   headPos() { const cam = this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera; return wp(cam); }
   follow(obj, opts = {}) { this.unfollow(obj); this.follows.push({ obj, dist: 0.5, yOff: -0.1, speed: 4, face: true, ...opts }); }
   unfollow(obj) { this.follows = this.follows.filter(f => f.obj !== obj); }
@@ -760,12 +768,12 @@ export class Flow {
     const a = L.chimney.clone(); let t = 0; const dur = 2.6;
     this.parchFlight = (dt) => {
       t += dt; const k = Math.min(1, t / dur), e = ease.inOut(k);
-      const d = this.viewTarget(0.6, -0.05), mid = a.clone().lerp(d, 0.5).add(V(0, 0.6, 0));
+      const d = this.viewFront(0.6), mid = a.clone().lerp(d, 0.5).add(V(0, 0.6, 0));
       const p1 = a.clone().lerp(mid, e), p2 = mid.clone().lerp(d, e);
       m.position.copy(p1.lerp(p2, e)); m.scale.setScalar(0.2 + 0.8 * e);
       m.lookAt(this.headPos()); m.rotateZ(Math.sin(t * 9) * 0.35 * (1 - k)); m.rotateX(Math.sin(t * 6) * 0.4 * (1 - k));
       if (Math.random() < 0.4) this.fx.emit(m.position, { color: '#ffcf8a', count: 1, speed: 0.05, gravity: 0.3, life: 0.6 });
-      if (k >= 1) { this.parchFlight = null; this.follow(m, { dist: 0.6, yOff: -0.05, speed: 4 }); this.later(12, () => this.closeParchment()); }
+      if (k >= 1) { this.parchFlight = null; this.follow(m, { dist: 0.6, yOff: 0, speed: 6 }); this.later(12, () => this.closeParchment()); }
     };
     this.setHint('편지가 도착했어요', '벽난로에서 날아온 산타의 편지를 읽어보세요. 다 읽으면 편지를 누르세요 (PC: 클릭 또는 Space).');
   }
@@ -785,7 +793,7 @@ export class Flow {
     this.pages.set({ view: 'choose', selected: null });
     this.scene.attach(this.book);
     const s0 = this.book.scale.x; this.tween(1.0, k => this.book.scale.setScalar(s0 + (1.0 - s0) * k));
-    this.follow(this.book, { dist: 0.55, yOff: -0.1, speed: 3.5, tiltBook: true });
+    this.follow(this.book, { dist: 0.55, yOff: -0.03, speed: 6, tiltBook: true });
     this.fx.emit(wp(this.book), { color: '#ffe28a', count: 40, speed: 0.5, life: 1 });
     this.setHint('01 마음 고르기', '테이블의 레시피북이 떠올랐어요. 첫 장에서 전하고 싶은 마음을 손가락으로 눌러 골라주세요. (PC: 클릭)');
   }
@@ -1260,7 +1268,7 @@ export class Flow {
     const a = L.chimney.clone(); let t = 0;
     this.recvFlight = (dt) => {
       t += dt; const k = Math.min(1, t / 2.4), e = ease.inOut(k);
-      const d = this.viewTarget(0.55, -0.12), mid = a.clone().lerp(d, 0.5).add(V(0, 0.5, 0));
+      const d = this.viewFront(0.55, -0.12), mid = a.clone().lerp(d, 0.5).add(V(0, 0.5, 0));
       this.recvBox.position.copy(this.group.worldToLocal(a.clone().lerp(mid, e).lerp(mid.clone().lerp(d, e), e)));
       this.recvBox.scale.setScalar(0.3 + 0.7 * e); this.recvBox.rotation.y += dt * 2;
       if (k >= 1) { this.recvFlight = null; this.follow(this.recvBox, { dist: 0.55, yOff: -0.12, speed: 3, face: false }); }
@@ -1279,7 +1287,7 @@ export class Flow {
     this.tween(0.7, k => bomb.scale.setScalar(Math.max(0.01, ease.back(k) * 1.6)));
     this.float(bomb, c.clone().add(V(0, -0.02, 0)));
     // the other santa's letter (a little drawing) and the end card
-    const head = this.headPos(), fwd = this.viewTarget(1, 0).sub(head).setY(0).normalize(), right = V().crossVectors(fwd, V(0, 1, 0));
+    const vf = this.viewFrame();   // both cards square to the view, side by side
     const letter = new Panel({ w: 0.26, h: 0.19, px: 760, transparent: false, name: 'ReceivedLetter', draw: (g, P) => {
       if (!P.bg) { g.fillStyle = '#fbf5e8'; g.fillRect(0, 0, P.W, P.H); }
       g.lineCap = 'round'; g.lineWidth = 8;
@@ -1288,7 +1296,7 @@ export class Flow {
       g.strokeStyle = '#f9a825'; g.beginPath(); g.moveTo(P.W * 0.72, P.H * 0.15); g.lineTo(P.W * 0.72, P.H * 0.25); g.stroke();
       P.text('Merry Christmas ♥', P.W / 2, P.H - 70, { size: 34, weight: 700, color: '#1565c0', align: 'center' });
     } });
-    letter.mesh.position.copy(head).addScaledVector(fwd, 0.6).addScaledVector(right, -0.3).add(V(0, -0.1, 0)); letter.mesh.lookAt(head); this.scene.add(letter.mesh);
+    letter.mesh.position.copy(vf.head).addScaledVector(vf.f, 0.62).addScaledVector(vf.r, -0.2).addScaledVector(vf.u, -0.12); letter.mesh.quaternion.copy(vf.q); this.scene.add(letter.mesh);
     this.endPanel = new Panel({ w: 0.5, h: 0.3, px: 1100, name: 'EndPanel', draw: (g, P) => {
       P.card(INK.paper, INK.red);
       P.text('다른 산타의 선물이 도착했어요!', P.W / 2, 50, { size: 50, weight: 700, color: INK.red, align: 'center' });
@@ -1297,7 +1305,7 @@ export class Flow {
       P.text('From. 이름 모를 산타', P.W / 2, 290, { size: 32, color: INK.sub, align: 'center' });
       P.button('restart', P.W / 2 - 230, P.H - 150, 460, 100, '처음부터 다시하기', { size: 40, color: '#8a6f5e' });
     } });
-    const e = this.endPanel.mesh; e.position.copy(head).addScaledVector(fwd, 0.75).addScaledVector(right, 0.32).add(V(0, -0.02, 0)); e.lookAt(head); e.visible = false; this.scene.add(e);
+    const e = this.endPanel.mesh; e.position.copy(vf.head).addScaledVector(vf.f, 0.75).addScaledVector(vf.r, 0.2).addScaledVector(vf.u, 0.06); e.quaternion.copy(vf.q); e.visible = false; this.scene.add(e);
     this.panels.push(this.endPanel); this.garden?.blockers.push(e);
     this.later(1.4, () => { e.visible = true; this.setHint('메리 크리스마스!', `이름 모를 산타가 '${r.emotion}'${josa(r.emotion, '을', '를')} 담아 보낸 ${r.name}${josa(r.name, '과', '와')} 그림 편지예요.`, '#ffe17a'); });
   }
@@ -1364,13 +1372,19 @@ export class Flow {
     this.parchFlight?.(dt); this.recvFlight?.(dt);
     // follow the view
     const head = this.headPos();
+    // UI that follows the view (letter, recipe book): straight in front of the eyes, square to the view, no roll
+    const vcam = this.renderer.xr.isPresenting ? this.renderer.xr.getCamera() : this.camera;
+    const ve = new THREE.Euler().setFromQuaternion(vcam.getWorldQuaternion(new THREE.Quaternion()), 'YXZ'); ve.z = 0;
+    const vq = new THREE.Quaternion().setFromEuler(ve), vf = V(0, 0, -1).applyQuaternion(vq), vu = V(0, 1, 0).applyQuaternion(vq);
     for (const f of this.follows) {
-      const target = this.viewTarget(f.dist, f.yOff), a = 1 - Math.exp(-dt * f.speed);
+      const a = 1 - Math.exp(-dt * f.speed);
+      const target = f.face === false ? this.viewTarget(f.dist, f.yOff) : head.clone().addScaledVector(vf, f.dist).addScaledVector(vu, f.yOff);
       const cur = wp(f.obj); cur.lerp(target, a); f.obj.position.copy(f.obj.parent.worldToLocal(cur));
       if (f.face !== false) {
-        const q0 = f.obj.quaternion.clone(); f.obj.lookAt(head);
-        if (f.tiltBook) f.obj.rotateX(Math.PI / 2 - 0.15);   // book: pages (local +Y) toward the reader, top edge up, a little lectern tilt
-        const q1 = f.obj.quaternion.clone(); f.obj.quaternion.copy(q0).slerp(q1, a);
+        const q1 = vq.clone();
+        if (f.tiltBook) q1.multiply(new THREE.Quaternion().setFromAxisAngle(V(1, 0, 0), Math.PI / 2));   // book: pages (local +Y) face the reader
+        q1.premultiply(f.obj.parent.getWorldQuaternion(new THREE.Quaternion()).invert());
+        f.obj.quaternion.slerp(q1, a);
       }
     }
     for (const f of this.floaters) {
