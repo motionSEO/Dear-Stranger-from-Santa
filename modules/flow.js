@@ -600,18 +600,15 @@ export class Flow {
     c.addEventListener('pointerdown', (e) => {
       if (this.renderer.xr.isPresenting) return;
       if (this.s.step === 'dark') { this.begin(); }
-      if (e.button === 2 && this.mouseObj) { this.tiltKey = true; this.rightTilt = true; return; }
       if (e.button !== 0) return;
       const r = c.getBoundingClientRect(), ndc = new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
       const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, this.camera); ray.far = 3.5;
       this.onClick(ray);
     });
     addEventListener('pointerup', (e) => {
-      if (e.button === 2 && this.rightTilt) { this.tiltKey = false; this.rightTilt = false; }
       if (e.button === 0) { this.pressHold = null; this.drawing = false; }
     });
     c.addEventListener('wheel', (e) => { if (this.mouseObj) this.mouseDepth = THREE.MathUtils.clamp(this.mouseDepth - e.deltaY * 0.0006, 0.25, 1.0); }, { passive: true });
-    document.addEventListener('pointerlockchange', () => { if (document.pointerLockElement && this.s.step === 'dark') this.begin(); });
     this.renderer.xr.addEventListener('sessionstart', () => { if (this.s.step === 'dark') setTimeout(() => this.begin(), 600); });
   }
   clickables() {
@@ -692,7 +689,7 @@ export class Flow {
     if (o === this.knife) return this.tryCut();
     if (o === this.pestle) return this.pound();
     if (o?.userData.breakable) return this.breakItem(o);
-    if (o?.userData.squeeze) { if (this.over(o, this.zones.mortar)) return this.addToMortar(o, o.userData.ing); return this.toast('절구 쪽을 바라보고 Space를 눌러주세요'); }
+    if (o?.userData.squeeze) { if (this.over(o, this.zones.mortar)) return this.addToMortar(o, o.userData.ing); return this.toast('절구 위로 가져가서 Space를 눌러주세요'); }
     if (st === 'press') return this.closeLid();
     if (st === 'open') return this.openLid();
     if (st === 'wrapCover') return this.coverWrap();
@@ -804,7 +801,7 @@ export class Flow {
     this.tween(1.2, k => { const e = ease.inOut(k); this.book.position.lerpVectors(p0, hm.pos, e); this.book.quaternion.slerpQuaternions(q0, hm.quat, e); this.book.scale.lerpVectors(s0, hm.scale, e); });
     this.pages.set({ view: 'work' });
     this.makeMold();
-    this.setHint('03 재료 수집 · 공통 베이스', '오른쪽 뒤 선반에서 요정설탕과 별가루 병을 찾아, 절구 위에서 병을 기울여 쏟아 넣어주세요. (PC: 병을 클릭한 채 절구를 보고 R 또는 오른쪽 버튼으로 기울이기)');
+    this.setHint('03 재료 수집 · 공통 베이스', '오른쪽 뒤 선반에서 요정설탕과 별가루 병을 찾아, 절구 위에서 병을 기울여 쏟아 넣어주세요. (PC: 병을 클릭한 채 절구 위로 끌어가 R 키를 누른 채 기울이기)');
     this.setMarkers(BASE.map(id => this.bottles[id]));
   }
   needed() { const r = this.s.recipe; return r ? [...BASE, ...r.naturals] : []; }
@@ -986,7 +983,7 @@ export class Flow {
         this.grab(h, { modes: ['pinch', 'fist'], reach: 0.04 });
       });
       this.toast('반으로 잘렸어요! 반쪽을 들고 절구 위에서 즙을 짜주세요');
-      this.setHint('04 손질 · 즙 짜기', '자른 반쪽을 들고 절구 위에서 손을 꽉 쥐거나 놓아 즙을 짜주세요. (PC: 반쪽을 클릭한 채 절구를 보고 Space)');
+      this.setHint('04 손질 · 즙 짜기', '자른 반쪽을 들고 절구 위에서 손을 꽉 쥐거나 놓아 즙을 짜주세요. (PC: 반쪽을 클릭한 채 절구 위로 끌어가 Space)');
     } else {
       const s = this.make('pieces_' + id, () => PH.pieces(id));
       s.position.copy(this.group.worldToLocal(c.clone())); this.group.add(s);
@@ -1030,7 +1027,7 @@ export class Flow {
   toPour() {
     this.s.step = 'pour';
     this.setGrabEnabled(this.mortar, true); this.forceRelease(this.pestle); this.goHome(this.pestle);
-    this.setHint('06 틀에 붓기', '절구를 들고 왼쪽의 틀 위에서 기울여 가루를 부어주세요. (PC: 절구를 클릭한 채 틀을 보고 R 또는 오른쪽 버튼)');
+    this.setHint('06 틀에 붓기', '절구를 들고 왼쪽의 틀 위에서 기울여 가루를 부어주세요. (PC: 절구를 클릭한 채 틀 위로 끌어가 R 키를 누른 채)');
     this.setMarkers([this.mortar]);
   }
   moldFilled() {
@@ -1082,13 +1079,13 @@ export class Flow {
       this.decorObj = this.make('decor_' + this.s.recipeId, () => PH.decorPlace(d));
       this.decorObj.position.copy(this.group.worldToLocal(wp(this.mold).add(V(0.12, 0.0, 0.06)))); this.group.add(this.decorObj);
       this.grab(this.decorObj, { modes: ['pinch', 'fist'], reach: 0.04 });
-      this.setHint('07 최종 장식', `${d.label}${josa(d.label, '을', '를')} 집어 배쓰밤 위에 올려주세요. (PC: 클릭한 채 배쓰밤을 보고 놓기)`);
+      this.setHint('07 최종 장식', `${d.label}${josa(d.label, '을', '를')} 집어 배쓰밤 위에 올려주세요. (PC: 클릭한 채 배쓰밤 위로 끌어가 놓기)`);
     } else {
       this.decorObj = this.make('shaker_' + this.s.recipeId, () => PH.shaker(d));
       this.decorObj.position.copy(this.group.worldToLocal(wp(this.mold).add(V(0.12, 0.0, 0.06)))); this.group.add(this.decorObj);
       this.grab(this.decorObj, { modes: ['fist', 'pinch'], reach: 0.04 });
       this.sprinkleT = 0;
-      this.setHint('07 최종 장식', `장식통을 들고 배쓰밤 위에서 기울여 ${d.label}${josa(d.label, '을', '를')} 뿌려주세요. (PC: R 또는 오른쪽 버튼)`);
+      this.setHint('07 최종 장식', `장식통을 들고 배쓰밤 위에서 기울여 ${d.label}${josa(d.label, '을', '를')} 뿌려주세요. (PC: R 키를 누른 채)`);
     }
     this.setMarkers([this.decorObj]);
   }
@@ -1181,7 +1178,7 @@ export class Flow {
     });
     this.pen = this.make('pen', PH.pen); this.pen.position.set(L.letter.x + 0.2, DESK_Y + 0.006, L.letter.z + 0.22); this.pen.rotation.z = Math.PI / 2; this.group.add(this.pen);
     this.grab(this.pen, { modes: ['pinch', 'fist'], reach: 0.04, tip: V(0, -0.012, 0) });
-    this.setHint('09 그림 편지', '종이에 손가락(또는 펜)으로 그림을 그려 마음을 표현해보세요. 잉크병을 만지면 색이 바뀌어요. 다 그리면 \'편지 완성\'. (PC: 종이를 클릭한 채 시선을 움직여 그리기)');
+    this.setHint('09 그림 편지', '종이에 손가락(또는 펜)으로 그림을 그려 마음을 표현해보세요. 잉크병을 만지면 색이 바뀌어요. 다 그리면 \'편지 완성\'. (PC: 종이 위에서 왼쪽 버튼을 누른 채 마우스로 그리기)');
     this.setMarkers([{ obj: m, off: V(0, 0, 0.06) }]);
   }
   pickInk(c) { if (this.inkColor !== c) { this.inkColor = c; this.toast('잉크 색이 바뀌었어요'); } }

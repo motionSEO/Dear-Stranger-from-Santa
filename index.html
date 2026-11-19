@@ -44,7 +44,7 @@
     background:rgba(8,9,13,.55); cursor:pointer; }
   #start b { font-size:17px; color:#ffd9a8; }
   #start span { color:#c9c0b2; font-size:12px; }
-  body.locked #start, body.xr #start { display:none; }
+  body.locked #start, body.started #start, body.xr #start { display:none; }
   body.locked #hud { opacity:.35; pointer-events:none; }
   #pad { position:fixed; left:24px; bottom:24px; z-index:12; width:120px; height:120px; border-radius:50%;
     border:1px solid rgba(255,215,170,.3); background:rgba(16,14,12,.35); display:none; touch-action:none; }
@@ -71,12 +71,12 @@
       <button id="mode" aria-pressed="true">1인칭 걷기</button>
       <button id="shadows" aria-pressed="true">그림자</button>
     </div>
-    <div style="margin-top:7px;font-size:11px;color:#9c9387"><b style="color:#ffd9a8">체험: 시작하면 벽난로에 불이 붙고 편지가 날아와요. 안내(화면 위)를 따라가요. Space = 행동 · R/오른쪽 클릭 = 기울이기</b><br>클릭 = 시점 잠금 · 마우스 = 둘러보기 · WASD = 걷기 · Shift = 빠르게 · C = 웅크리기 · Esc = 해제<br>허브: 조준점을 화분에 두고 왼쪽 클릭 누른 채 = 잎 따기, 떼면 떨어짐 (휠 = 거리) · 머그: 누르고 있으면 마시기
+    <div style="margin-top:7px;font-size:11px;color:#9c9387"><b style="color:#ffd9a8">체험: 시작하면 벽난로에 불이 붙고 편지가 날아와요. 안내(화면 위)를 따라가요. Space = 행동 · R 누른 채 = 기울이기</b><br>오른쪽 버튼 드래그 = 시점 돌리기 · 왼쪽 클릭 = 상호작용(마우스 커서 위치) · WASD = 걷기 · Shift = 빠르게 · C = 웅크리기<br>허브: 커서를 화분에 두고 왼쪽 클릭 누른 채 = 잎 따기, 떼면 떨어짐 (휠 = 거리) · 머그: 누르고 있으면 마시기
       <br>퀘스트3 손: 엄지+검지 집기 = 허브 따기 · 주먹 = 머그 잡기 · 빈 곳에 집기 → 가리킨 바닥으로 이동
       <br>퀘스트3 컨트롤러: 왼쪽 스틱 = 걷기 · 오른쪽 스틱 = 회전 · 트리거 = 집기/이동 · 그립 = 머그</div>
   </div>
 </div>
-<div id="start"><b>클릭해서 다락방 들어가기</b><span>마우스로 둘러보고 WASD로 걸어요 · Esc로 빠져나오기</span></div>
+<div id="start"><b>클릭해서 시작하기</b><span>오른쪽 버튼을 누른 채 끌면 둘러보고, 왼쪽 클릭으로 물건을 만지고, WASD로 걸어요</span></div>
 <div id="cross"></div>
 <div id="toast"></div>
 <div id="hint"></div>
@@ -143,7 +143,7 @@ const hemi = new THREE.HemisphereLight(
 scene.add(hemi);
 
 // ---------------------------------------------------------------- player (first person)
-// Desktop: the camera sits at player.feet + eye height, yaw/pitch from the mouse (pointer lock).
+// Desktop: the camera sits at player.feet + eye height, yaw/pitch from a right-button drag (the cursor stays free for clicking).
 // VR: the camera lives in the rig; the rig stands on player.feet and the headset pose is added on top.
 const camera = new THREE.PerspectiveCamera(68, innerWidth/innerHeight, 0.02, 120);
 scene.add(camera);
@@ -272,8 +272,8 @@ const el = renderer.domElement;
 el.addEventListener('contextmenu', e => e.preventDefault());
 const startEl = document.getElementById('start');
 const locked = () => document.pointerLockElement === el;
-const lock = () => { if (!renderer.xr.isPresenting) el.requestPointerLock?.(); };
-startEl.addEventListener('click', lock);
+// PC: no pointer lock. The cursor stays free: right-drag looks around, left click interacts where the cursor is.
+startEl.addEventListener('click', () => { document.body.classList.add('started'); window.__flow?.begin(); });
 document.addEventListener('pointerlockchange', () => document.body.classList.toggle('locked', locked()));
 document.addEventListener('mousemove', e => {
   if (!locked()) return;
